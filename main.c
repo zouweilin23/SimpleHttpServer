@@ -1,12 +1,10 @@
-#pragma once
-#include <iostream>
 #include "server.h"
-#include "stdio.h"
-using namespace std;
-
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        cout << "./main port path" << endl;
+        printf("./main port path\n");
         return -1;
     }
 

@@ -1,18 +1,5 @@
 #pragma once
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <sys/epoll.h>
-#include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <strings.h>
-#include <pthread.h>
-#include <stdlib.h>
-#include <sys/stat.h>
-#include <assert.h>
-#include <sys/sendfile.h>
-#include <dirent.h>
+
 //初始化监听的套接字
 int initListenFd(unsigned short port);
 

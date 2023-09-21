@@ -1,5 +1,21 @@
+#define _DEFAULT_SOURCE
 #include "server.h"
-
+#include <arpa/inet.h>
+#include <sys/epoll.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <strings.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <assert.h>
+#include <sys/sendfile.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <ctype.h>
 //每个监听的epoll端口基本信息结构体
 struct Fdinfo
 {
@@ -51,7 +67,7 @@ int epollRun(int lfd) {
         perror("epoll_create");
         return -1;
     }
-
+    printf("创建epoll成功\n");
     struct epoll_event ev;
     ev.events = EPOLLIN;
     ev.data.fd = lfd;
@@ -122,7 +138,7 @@ void* recvHttpRequest(void* arg) {
     int len = 0;
     int total = 0;
     //读取缓冲区数据
-    while ((len = read(info->fd, temp, sizeof(temp)-1) > 0)) {
+    while ((len = recv(info->fd, temp, sizeof(temp),0))>0) {
         if ((total + len) < sizeof(buffer)) {
             memcpy(buffer + total, temp, len);
         }
@@ -149,18 +165,18 @@ void* recvHttpRequest(void* arg) {
     }
     printf("recvMsg pthread:%ld\n", info->tid);
     free(info);
-    return nullptr;
+    return NULL;
 }
 //解析请求行
 int parseRequestLine(const char* line, int cfd) {
     char method[12] = { 0 };
     char path[1024] = { 0 };
     sscanf(line, "%[^ ] %[^ ]", method, path);
-    printf("method:%s,path%s\n", method, path);
+    printf("method: %s, path: %s\n", method, path);
     if (strcasecmp(method, "get") != 0) {
         return -1;
     }
-
+    decodeMsg(path, path);//处理文件名中特殊字符  乱码
     //处理http请求中的路径
     char* file = NULL;
     if (strcmp(path, "/") == 0) {
@@ -202,6 +218,7 @@ int sendFile(const char* fileName, int cfd) {
     //高效率发送文件方式  sendfile
     off_t offset = 0;
     int size = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
     while (offset < size) {
         int ret = sendfile(cfd, fd, &offset, size - offset);
         printf("已发送文件的%d字节数据给客户端\n", ret);
@@ -297,14 +314,63 @@ const char* getFileType(const char* name) {
 //该函数用于创建发送给浏览器的html代码
 int sendDir(const char* dirName, int cfd) {
     char buffer[4096] = { 0 };
-    sprintf(buffer, "<html><head><title> % s< / title>< / head><body> < table>", dirName);
+    sprintf(buffer, "<html><head><title>%s</title></head><body><table>", dirName);
 
+    //读取目录
+    struct dirent** namelist;
+    int num = scandir(dirName, &namelist, NULL, alphasort);
+    for (int i = 0; i < num; i++) {
+        //将得到的目录中的每个文件信息写入到html中
+        char* name = namelist[i]->d_name;
+        struct stat st;
+        char subpath[1024] = { 0 };
+        sprintf(subpath, "%s/%s", dirName, name);//拼接路径
+        stat(subpath, &st);
+        if (S_ISDIR(st.st_mode)) {
+            // a标签 <a href="">name</a>
+            sprintf(buffer + strlen(buffer), "<tr><td><a href=\"%s/\">%s</a></td><td>%ld</td></tr>", name, name, st.st_size);
+        }
+        else {
+            sprintf(buffer + strlen(buffer), "<tr><td><a href=\"%s\">%s</a></td><td>%ld</td></tr>", name, name, st.st_size);
+        }
+        send(cfd, buffer, strlen(buffer), 0);
+        memset(buffer, 0, sizeof(buffer));
+        free(namelist[i]);
+    }
+    sprintf(buffer, "</table></body></html>");
+    send(cfd, buffer, strlen(buffer), 0);
+    free(namelist);
+    return 0;
 }
 
 //文件名中的特殊字符处理
 int hexToDec(char c) {
-
+    //将字符转换为整形
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return 0;
 }
 void decodeMsg(char* to, char* from) {
-
+    for (; *from != '\0'; ++from, ++to) {
+        // isxdigit -> 判断字符是不是16进制格式, 取值在 0-f
+        // Linux%E5%86%85%E6%A0%B8.jpg
+        // 将16进制的数 -> 十进制 将这个数值赋值给了字符 int -> char
+        // B2 == 178
+        // 将3个字符, 变成了一个字符, 这个字符就是原始数据
+        if (from[0] == '%' && isxdigit(from[1]) && isxdigit(from[2])) {
+            *to = hexToDec(from[1]) * 16 + hexToDec(from[2]);
+            from += 2;
+        }
+        else {
+            *to = *from;
+        }
+    }
+    *to = '\0';
 }
